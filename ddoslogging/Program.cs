@@ -22,11 +22,68 @@ namespace DdosDetection
 
         static void Main(string[] args)
         {
+            FilterTimeRange();
+            /*
             var networkUsageTask = Task.Run(() => MonitorNetworkUsage());
             var packetCaptureTask = Task.Run(() => CapturePackets());
 
-            Task.WaitAll(networkUsageTask, packetCaptureTask);
+            Task.WaitAll(networkUsageTask, packetCaptureTask);*/
         }
+
+        static void FilterTimeRange()
+        {
+            // Replace with your pcap file path and time ranges
+            string pcapFilePath = "A:\\Users\\Namidaka\\Desktop\\captured_packets.pcap";
+            List<Tuple<DateTime, DateTime>> timeRanges = new List<Tuple<DateTime, DateTime>>
+        {
+            Tuple.Create(new DateTime(2023, 04, 13, 19, 45, 20), new DateTime(2023, 04, 13, 19, 50, 20)),
+            Tuple.Create(new DateTime(2023, 04, 13, 20, 23, 22), new DateTime(2023, 04, 13, 20, 28, 22)),
+            Tuple.Create(new DateTime(2023, 04, 13, 21, 07, 24), new DateTime(2023, 04, 13, 21, 12, 24)),
+            Tuple.Create(new DateTime(2023, 04, 13, 21, 37, 38), new DateTime(2023, 04, 13, 21, 42, 38))
+        };
+
+
+            // Open the input pcap file
+            using var inputDevice = new CaptureFileReaderDevice(pcapFilePath);
+            inputDevice.Open();
+
+            // Create a new pcap file for the filtered packets
+            string filteredPcapFilePath = "A:\\Users\\Namidaka\\Desktop\\filtered_packets.pcap";
+
+            // Process and filter packets based on time ranges
+            PacketCapture packetCapture;
+            using var writer = new CaptureFileWriterDevice(filteredPcapFilePath);
+            writer.Open();
+            while (inputDevice.GetNextPacket(out packetCapture) == GetPacketStatus.PacketRead)
+            {
+                DateTime packetTimestamp = packetCapture.Header.Timeval.Date;
+
+                foreach (var timeRange in timeRanges)
+                {
+                    if (packetTimestamp >= timeRange.Item1 && packetTimestamp <= timeRange.Item2)
+                    {
+                        var rawCapture = packetCapture.GetPacket();
+                        writer.Write(rawCapture);
+                        break;
+                    }
+                }
+            }
+
+            // Close the writer and the input pcap file
+            writer.Close();
+            inputDevice.Close();
+
+            Console.WriteLine($"Filtered pcap file saved to: {filteredPcapFilePath}");
+            if (File.Exists(filteredPcapFilePath))
+            {
+                Console.WriteLine($"Filtered pcap file saved to: {filteredPcapFilePath}");
+            }
+            else
+            {
+                Console.WriteLine($"Filtered pcap file not found at: {filteredPcapFilePath}");
+            }
+        }
+    
 
         private static void MonitorNetworkUsage()
         {
