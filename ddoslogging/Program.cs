@@ -1,9 +1,8 @@
-﻿using System;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using SharpPcap;
 using SharpPcap.LibPcap;
 
-namespace DdosDetection
+namespace DdosCatcher
 {
     class Program
     {
@@ -14,83 +13,23 @@ namespace DdosDetection
         private const int MonitoringInterval = 1000;
 
         // PCAP output file path
-        private static string PcapOutputFile => $"captured_packets_{DateTime.Now:yyyyMMdd_HHmmss}.pcap";
+        private const string PcapOutputFile = "captured_packets.pcap";
 
-        private static bool _capturePackets = false;
-        private static PcapDevice _captureDevice;
-        private static CaptureFileWriterDevice _captureFileWriter;
+        private const string Interface = "Microsoft Hyper-V Network Adapter";
 
-        static void Main(string[] args)
+        private static bool _capturePackets;
+
+        static void Main()
         {
-            FilterTimeRange();
-            /*
-            var networkUsageTask = Task.Run(() => MonitorNetworkUsage());
-            var packetCaptureTask = Task.Run(() => CapturePackets());
+            var networkUsageTask = Task.Run(MonitorNetworkUsage);
+            var packetCaptureTask = Task.Run(CapturePackets);
 
-            Task.WaitAll(networkUsageTask, packetCaptureTask);*/
+            Task.WaitAny(networkUsageTask, packetCaptureTask);
         }
-
-        static void FilterTimeRange()
-        {
-            // Replace with your pcap file path and time ranges
-            string pcapFilePath = "A:\\Users\\Namidaka\\Desktop\\captured_packets.pcap";
-            List<Tuple<DateTime, DateTime>> timeRanges = new List<Tuple<DateTime, DateTime>>
-        {
-            Tuple.Create(new DateTime(2023, 04, 13, 19, 45, 20), new DateTime(2023, 04, 13, 19, 50, 20)),
-            Tuple.Create(new DateTime(2023, 04, 13, 20, 23, 22), new DateTime(2023, 04, 13, 20, 28, 22)),
-            Tuple.Create(new DateTime(2023, 04, 13, 21, 07, 24), new DateTime(2023, 04, 13, 21, 12, 24)),
-            Tuple.Create(new DateTime(2023, 04, 13, 21, 37, 38), new DateTime(2023, 04, 13, 21, 42, 38))
-        };
-
-
-            // Open the input pcap file
-            using var inputDevice = new CaptureFileReaderDevice(pcapFilePath);
-            inputDevice.Open();
-
-            // Create a new pcap file for the filtered packets
-            string filteredPcapFilePath = "A:\\Users\\Namidaka\\Desktop\\filtered_packets.pcap";
-
-            // Process and filter packets based on time ranges
-            PacketCapture packetCapture;
-            using var writer = new CaptureFileWriterDevice(filteredPcapFilePath);
-            writer.Open();
-            while (inputDevice.GetNextPacket(out packetCapture) == GetPacketStatus.PacketRead)
-            {
-                DateTime packetTimestamp = packetCapture.Header.Timeval.Date;
-
-                foreach (var timeRange in timeRanges)
-                {
-                    if (packetTimestamp >= timeRange.Item1 && packetTimestamp <= timeRange.Item2)
-                    {
-                        var rawCapture = packetCapture.GetPacket();
-                        writer.Write(rawCapture);
-                        break;
-                    }
-                }
-            }
-
-            // Close the writer and the input pcap file
-            writer.Close();
-            inputDevice.Close();
-
-            Console.WriteLine($"Filtered pcap file saved to: {filteredPcapFilePath}");
-            if (File.Exists(filteredPcapFilePath))
-            {
-                Console.WriteLine($"Filtered pcap file saved to: {filteredPcapFilePath}");
-            }
-            else
-            {
-                Console.WriteLine($"Filtered pcap file not found at: {filteredPcapFilePath}");
-            }
-        }
-    
 
         private static void MonitorNetworkUsage()
         {
-            var networkInterfacePerformanceCounter = new PerformanceCounter("Network Interface", "Bytes Total/sec");
-            networkInterfacePerformanceCounter.InstanceName = GetNetworkInterfaceInstanceName();
-
-            bool wasCapturing = false;
+            PerformanceCounter networkInterfacePerformanceCounter = new("Network Interface", "Bytes Total/sec", Interface);
 
             while (true)
             {
@@ -103,17 +42,9 @@ namespace DdosDetection
                 {
                     Console.WriteLine("High network usage detected.");
                     _capturePackets = true;
-                    wasCapturing = true;
                 }
                 else
                 {
-                    if (wasCapturing)
-                    {
-                        // Save captured packets and reset the capture file writer
-                        _captureFileWriter?.Close();
-                        _captureFileWriter = new CaptureFileWriterDevice(PcapOutputFile);
-                        wasCapturing = false;
-                    }
                     _capturePackets = false;
                 }
 
@@ -121,53 +52,39 @@ namespace DdosDetection
             }
         }
 
-        private static string GetNetworkInterfaceInstanceName()
-        {
-            return "Microsoft Hyper-V Network Adapter"; // Your network interface instance name
-        }
-
         private static void CapturePackets()
         {
-            Console.WriteLine("CAPTURE PACKETS IS BEING EXECUTED");
-            Console.WriteLine("CAPTURE PACKETS IS BEING EXECUTED");
-            Console.WriteLine("CAPTURE PACKETS IS BEING EXECUTED");
-            Console.WriteLine("CAPTURE PACKETS IS BEING EXECUTED"); 
-            Console.WriteLine("CAPTURE PACKETS IS BEING EXECUTED");
-            Console.WriteLine("CAPTURE PACKETS IS BEING EXECUTED");
+            var captureDevice = CaptureDeviceList.Instance.First(d => d.Description == Interface);
+            captureDevice.Open(DeviceModes.Promiscuous);
 
-            var devices = CaptureDeviceList.Instance;
+            CaptureFileWriterDevice captureFileWriter = new(PcapOutputFile, FileMode.Truncate);
+            captureFileWriter.Open(captureDevice);
 
-            if (devices.Count < 1)
+            int i = 0;
+            captureDevice.OnPacketArrival += (sender, e) =>
             {
-                Console.WriteLine("No devices were found.");
-                return;
-            }
+                if (!_capturePackets)
+                {
+                    return;
+                }
 
-            // Use the first available device
-            _captureDevice = (PcapDevice)devices[0];
-            // Print the device's name and description
-            Console.WriteLine($"Selected device: {_captureDevice.Name}");
-            Console.WriteLine($"Device description: {_captureDevice.Description}");
+                i += 1;
+                if (i % 100 != 0)
+                {
+                    return;
+                }
 
-            _captureDevice.Open(DeviceModes.Promiscuous, 1000);
-            _captureDevice.OnPacketArrival += Device_OnPacketArrival;
+                captureFileWriter.Write(e.GetPacket());
+            };
 
-            // Initialize the capture file writer
-            var filePath = PcapOutputFile;
-            _captureFileWriter = new CaptureFileWriterDevice(filePath);
-            Console.WriteLine($"Initialized capture file writer with file path: {filePath}");
+            captureDevice.StartCapture();
 
-            _captureDevice.StartCapture();
-        }
+            Console.WriteLine("Press Enter to stop...");
+            Console.ReadLine();
 
-        private static void Device_OnPacketArrival(object sender, PacketCapture e)
-        {
-            if (!_capturePackets || _captureFileWriter == null)
-            {
-                return;
-            }
-            Console.WriteLine("Packet arrived."); // Add this line
-            _captureFileWriter.Write(e.GetPacket());
+            captureDevice.StopCapture();
+            captureDevice.Close();
+            captureFileWriter.Close();
         }
     }
 }
