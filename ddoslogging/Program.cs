@@ -2,7 +2,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net.NetworkInformation;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpPcap;
@@ -13,7 +12,7 @@ namespace DdosCatcher
     class Program
     {
         // Bandwidth threshold in bits per second (bps)
-        private const long BandwidthThreshold = 75 * 1000 * 1000; // 500 Mbps
+        private const long BandwidthThreshold = 500 * 1000 * 1000; // 500 Mbps
 
         // Monitoring interval in milliseconds
         private const int MonitoringInterval = 1000;
@@ -21,43 +20,45 @@ namespace DdosCatcher
         // PCAP output file path
         private const string PcapOutputFile = "captured_packets.pcap";
 
+        private static string _interface;
         private static bool _capturePackets;
 
         static void Main()
         {
+            ChooseNetworkInterface();
             var networkUsageTask = Task.Run(MonitorNetworkUsage);
             var packetCaptureTask = Task.Run(CapturePackets);
 
             Task.WaitAny(networkUsageTask, packetCaptureTask);
         }
 
-        private static ICaptureDevice GetFirstConnectedAdapter()
+        private static void ChooseNetworkInterface()
         {
-            var allNetworkInterfaces = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(ni => ni.OperationalStatus == OperationalStatus.Up)
-                .ToList();
-
-            foreach (var ni in allNetworkInterfaces)
+            Console.WriteLine("Please choose the correct network interface:");
+            var devices = CaptureDeviceList.Instance;
+            for (int i = 0; i < devices.Count; i++)
             {
-                var connectedAdapter = CaptureDeviceList.Instance.FirstOrDefault(d => d.MacAddress?.ToString() == ni.GetPhysicalAddress()?.ToString());
-                if (connectedAdapter != null)
-                {
-                    return connectedAdapter;
-                }
+                Console.WriteLine($"{i}. {devices[i].Description}");
             }
-            return null;
+
+            int selectedIndex;
+            while (true)
+            {
+                Console.Write("Enter the number of the correct network interface: ");
+                if (int.TryParse(Console.ReadLine(), out selectedIndex) && selectedIndex >= 0 && selectedIndex < devices.Count)
+                {
+                    break;
+                }
+
+                Console.WriteLine("Invalid input. Please try again.");
+            }
+
+            _interface = devices[selectedIndex].Description;
         }
 
         private static void MonitorNetworkUsage()
         {
-            var connectedAdapter = GetFirstConnectedAdapter();
-            if (connectedAdapter == null)
-            {
-                Console.WriteLine("No connected network adapter found.");
-                return;
-            }
-
-            PerformanceCounter networkInterfacePerformanceCounter = new("Network Interface", "Bytes Total/sec", connectedAdapter.Description);
+            PerformanceCounter networkInterfacePerformanceCounter = new("Network Interface", "Bytes Total/sec", _interface);
 
             while (true)
             {
@@ -82,20 +83,14 @@ namespace DdosCatcher
 
         private static void CapturePackets()
         {
-            var connectedAdapter = GetFirstConnectedAdapter();
-            if (connectedAdapter == null)
-            {
-                Console.WriteLine("No connected network adapter found.");
-                return;
-            }
-
-            connectedAdapter.Open(DeviceModes.Promiscuous);
+            var captureDevice = CaptureDeviceList.Instance.First(d => d.Description == _interface);
+            captureDevice.Open(DeviceModes.Promiscuous);
 
             CaptureFileWriterDevice captureFileWriter = new(PcapOutputFile, FileMode.Truncate);
-            captureFileWriter.Open(connectedAdapter);
+            captureFileWriter.Open(captureDevice);
 
             int i = 0;
-            connectedAdapter.OnPacketArrival += (sender, e) =>
+            captureDevice.OnPacketArrival += (sender, e) =>
             {
                 if (!_capturePackets)
                 {
@@ -111,13 +106,13 @@ namespace DdosCatcher
                 captureFileWriter.Write(e.GetPacket());
             };
 
-            connectedAdapter.StartCapture();
+            captureDevice.StartCapture();
 
             Console.WriteLine("Press Enter to stop...");
             Console.ReadLine();
 
-            connectedAdapter.StopCapture();
-            connectedAdapter.Close();
+            captureDevice.StopCapture();
+            captureDevice.Close();
             captureFileWriter.Close();
         }
     }
