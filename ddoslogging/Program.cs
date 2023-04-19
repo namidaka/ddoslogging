@@ -1,4 +1,10 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net.NetworkInformation;
+using System.Threading;
+using System.Threading.Tasks;
 using SharpPcap;
 using SharpPcap.LibPcap;
 
@@ -7,15 +13,13 @@ namespace DdosCatcher
     class Program
     {
         // Bandwidth threshold in bits per second (bps)
-        private const long BandwidthThreshold = 500 * 1000 * 1000; // 500 Mbps
+        private const long BandwidthThreshold = 75 * 1000 * 1000; // 500 Mbps
 
         // Monitoring interval in milliseconds
         private const int MonitoringInterval = 1000;
 
         // PCAP output file path
         private const string PcapOutputFile = "captured_packets.pcap";
-
-        private const string Interface = "Microsoft Hyper-V Network Adapter";
 
         private static bool _capturePackets;
 
@@ -27,9 +31,33 @@ namespace DdosCatcher
             Task.WaitAny(networkUsageTask, packetCaptureTask);
         }
 
+        private static ICaptureDevice GetFirstConnectedAdapter()
+        {
+            var allNetworkInterfaces = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(ni => ni.OperationalStatus == OperationalStatus.Up)
+                .ToList();
+
+            foreach (var ni in allNetworkInterfaces)
+            {
+                var connectedAdapter = CaptureDeviceList.Instance.FirstOrDefault(d => d.MacAddress?.ToString() == ni.GetPhysicalAddress()?.ToString());
+                if (connectedAdapter != null)
+                {
+                    return connectedAdapter;
+                }
+            }
+            return null;
+        }
+
         private static void MonitorNetworkUsage()
         {
-            PerformanceCounter networkInterfacePerformanceCounter = new("Network Interface", "Bytes Total/sec", Interface);
+            var connectedAdapter = GetFirstConnectedAdapter();
+            if (connectedAdapter == null)
+            {
+                Console.WriteLine("No connected network adapter found.");
+                return;
+            }
+
+            PerformanceCounter networkInterfacePerformanceCounter = new("Network Interface", "Bytes Total/sec", connectedAdapter.Description);
 
             while (true)
             {
@@ -54,14 +82,20 @@ namespace DdosCatcher
 
         private static void CapturePackets()
         {
-            var captureDevice = CaptureDeviceList.Instance.First(d => d.Description == Interface);
-            captureDevice.Open(DeviceModes.Promiscuous);
+            var connectedAdapter = GetFirstConnectedAdapter();
+            if (connectedAdapter == null)
+            {
+                Console.WriteLine("No connected network adapter found.");
+                return;
+            }
+
+            connectedAdapter.Open(DeviceModes.Promiscuous);
 
             CaptureFileWriterDevice captureFileWriter = new(PcapOutputFile, FileMode.Truncate);
-            captureFileWriter.Open(captureDevice);
+            captureFileWriter.Open(connectedAdapter);
 
             int i = 0;
-            captureDevice.OnPacketArrival += (sender, e) =>
+            connectedAdapter.OnPacketArrival += (sender, e) =>
             {
                 if (!_capturePackets)
                 {
@@ -77,13 +111,13 @@ namespace DdosCatcher
                 captureFileWriter.Write(e.GetPacket());
             };
 
-            captureDevice.StartCapture();
+            connectedAdapter.StartCapture();
 
             Console.WriteLine("Press Enter to stop...");
             Console.ReadLine();
 
-            captureDevice.StopCapture();
-            captureDevice.Close();
+            connectedAdapter.StopCapture();
+            connectedAdapter.Close();
             captureFileWriter.Close();
         }
     }
