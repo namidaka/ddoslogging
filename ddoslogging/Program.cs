@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpPcap;
@@ -29,14 +30,14 @@ namespace DdosCatcher
             var networkUsageTask = Task.Run(MonitorNetworkUsage);
             var packetCaptureTask = Task.Run(CapturePackets);
 
-            Task.WaitAny(networkUsageTask, packetCaptureTask);
+            Task.WaitAll(networkUsageTask, packetCaptureTask);
         }
 
         private static void ChooseNetworkInterface()
         {
             Console.WriteLine("Please choose the correct network interface:");
-            var devices = CaptureDeviceList.Instance;
-            for (int i = 0; i < devices.Count; i++)
+            var devices = NetworkInterface.GetAllNetworkInterfaces();
+            for (int i = 0; i < devices.Length; i++)
             {
                 Console.WriteLine($"{i}. {devices[i].Description}");
             }
@@ -45,7 +46,7 @@ namespace DdosCatcher
             while (true)
             {
                 Console.Write("Enter the number of the correct network interface: ");
-                if (int.TryParse(Console.ReadLine(), out selectedIndex) && selectedIndex >= 0 && selectedIndex < devices.Count)
+                if (int.TryParse(Console.ReadLine(), out selectedIndex) && selectedIndex >= 0 && selectedIndex < devices.Length)
                 {
                     break;
                 }
@@ -56,16 +57,34 @@ namespace DdosCatcher
             _interface = devices[selectedIndex].Description;
         }
 
+
         private static void MonitorNetworkUsage()
         {
-            PerformanceCounter networkInterfacePerformanceCounter = new("Network Interface", "Bytes Total/sec", _interface);
+            NetworkInterface? networkInterface = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(d => d.Description == _interface);
+
+            if (networkInterface == null)
+            {
+                Console.WriteLine($"Could not find the network interface {_interface}");
+                return;
+            }
+
+            long prevBytesReceived = -1;
 
             while (true)
             {
-                double bytesPerSecond = networkInterfacePerformanceCounter.NextValue();
-                double bitsPerSecond = bytesPerSecond * 8;
+                IPv4InterfaceStatistics stats = networkInterface.GetIPv4Statistics();
+                long bytesReceived = stats.BytesReceived;
 
-                Console.WriteLine($"Current network usage: {bitsPerSecond / 1_000_000} Mbps");
+                if (prevBytesReceived == -1)
+                {
+                    prevBytesReceived = bytesReceived;
+                    continue;
+                }
+
+                double bitsPerSecond = (bytesReceived - prevBytesReceived) * 8;
+
+                Console.WriteLine($"Current network usage (received): {bitsPerSecond / 1_000_000} Mbps");
 
                 if (bitsPerSecond >= BandwidthThreshold)
                 {
@@ -77,9 +96,14 @@ namespace DdosCatcher
                     _capturePackets = false;
                 }
 
+                prevBytesReceived = bytesReceived;
+
                 Thread.Sleep(MonitoringInterval);
             }
         }
+
+
+
 
         private static void CapturePackets()
         {
@@ -110,7 +134,7 @@ namespace DdosCatcher
 
             Console.WriteLine("Press Enter to stop...");
             Console.ReadLine();
-
+            Console.WriteLine("enter pressed");
             captureDevice.StopCapture();
             captureDevice.Close();
             captureFileWriter.Close();
