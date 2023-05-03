@@ -13,7 +13,7 @@ namespace DdosCatcher
     class Program
     {
         // Bandwidth threshold in bits per second (bps)
-        private const long BandwidthThreshold = 500 * 1000 * 1000; // 500 Mbps
+        private const long BandwidthThreshold = 50 * 1000 * 1000; // 50 Mbps
 
         // Monitoring interval in milliseconds
         private const int MonitoringInterval = 1000;
